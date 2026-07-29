@@ -39,54 +39,6 @@
 
 static SecureElementNvmData_t* SeNvm;
 
-/* Debug snapshots for AppKey/NwkKey at runtime (watch in debugger). */
-volatile uint8_t  gDbgSeAppKeyRaw[16] = { 0 };
-volatile uint64_t gDbgSeAppKeyHigh = 0;
-volatile uint64_t gDbgSeAppKeyLow = 0;
-volatile uint8_t  gDbgSeNwkKeyRaw[16] = { 0 };
-volatile uint64_t gDbgSeNwkKeyHigh = 0;
-volatile uint64_t gDbgSeNwkKeyLow = 0;
-
-static uint64_t DebugPackU64( const uint8_t *data, uint8_t size )
-{
-    uint64_t value = 0;
-
-    if( data == NULL )
-    {
-        return 0;
-    }
-
-    for( uint8_t i = 0; i < size; i++ )
-    {
-        value = ( value << 8 ) | data[i];
-    }
-    return value;
-}
-
-static void DebugUpdateSeKeySnapshots( void )
-{
-    if( SeNvm == NULL )
-    {
-        return;
-    }
-
-    for( uint8_t i = 0; i < NUM_OF_KEYS; i++ )
-    {
-        if( SeNvm->KeyList[i].KeyID == APP_KEY )
-        {
-            memcpy1( (uint8_t*)gDbgSeAppKeyRaw, SeNvm->KeyList[i].KeyValue, 16 );
-            gDbgSeAppKeyHigh = DebugPackU64( SeNvm->KeyList[i].KeyValue, 8 );
-            gDbgSeAppKeyLow = DebugPackU64( &( SeNvm->KeyList[i].KeyValue[8] ), 8 );
-        }
-        else if( SeNvm->KeyList[i].KeyID == NWK_KEY )
-        {
-            memcpy1( (uint8_t*)gDbgSeNwkKeyRaw, SeNvm->KeyList[i].KeyValue, 16 );
-            gDbgSeNwkKeyHigh = DebugPackU64( SeNvm->KeyList[i].KeyValue, 8 );
-            gDbgSeNwkKeyLow = DebugPackU64( &( SeNvm->KeyList[i].KeyValue[8] ), 8 );
-        }
-    }
-}
-
 /*
  * Local functions
  */
@@ -201,8 +153,6 @@ SecureElementStatus_t SecureElementInit( SecureElementNvmData_t* nvm )
     // Initialize data
     memcpy1( ( uint8_t* )SeNvm, ( uint8_t* )&seNvmInit, sizeof( seNvmInit ) );
 
-    DebugUpdateSeKeySnapshots( );
-
 #if !defined( SECURE_ELEMENT_PRE_PROVISIONED )
 #if( STATIC_DEVICE_EUI == 0 )
     // Get a DevEUI from MCU unique ID
@@ -236,10 +186,6 @@ SecureElementStatus_t SecureElementSetKey( KeyIdentifier_t keyID, uint8_t* key )
             else
             {
                 memcpy1( SeNvm->KeyList[i].KeyValue, key, SE_KEY_SIZE );
-                if( ( keyID == APP_KEY ) || ( keyID == NWK_KEY ) )
-                {
-                    DebugUpdateSeKeySnapshots( );
-                }
                 return SECURE_ELEMENT_SUCCESS;
             }
         }

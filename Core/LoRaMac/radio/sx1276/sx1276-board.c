@@ -24,10 +24,6 @@ extern SX1276_t SX1276;
 /* DioIrq table populated by SX1276IoIrqInit() */
 static DioIrqHandler **BoardDioIrqHandlers;
 
-/* Debug: watch in debugger to verify DIO callbacks are dispatched */
-volatile uint32_t gDbgDio0IrqCount = 0;
-volatile uint32_t gDbgDio1IrqCount = 0;
-
 /* -----------------------------------------------------------------------
  * SX1276IoInit - wire up GPIO and SPI objects in the global SX1276 struct
  * -------------------------------------------------------------------- */
@@ -80,7 +76,6 @@ void SX1276Reset( void )
 static void Dio0IrqHandler( void *context )
 {
     (void)context;
-    gDbgDio0IrqCount++;
     if( BoardDioIrqHandlers && BoardDioIrqHandlers[0] )
     {
         BoardDioIrqHandlers[0]( NULL );
@@ -90,7 +85,6 @@ static void Dio0IrqHandler( void *context )
 static void Dio1IrqHandler( void *context )
 {
     (void)context;
-    gDbgDio1IrqCount++;
     if( BoardDioIrqHandlers && BoardDioIrqHandlers[1] )
     {
         BoardDioIrqHandlers[1]( NULL );

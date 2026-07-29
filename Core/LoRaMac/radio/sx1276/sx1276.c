@@ -276,8 +276,6 @@ const FskBandwidth_t FskBandwidths[] =
  */
 static RadioEvents_t *RadioEvents;
 
-/* Debug markers for invalid radio parameter paths that previously trapped in while(1). */
-
 /*!
  * Reception buffer
  */
@@ -291,14 +289,6 @@ static uint8_t RxTxBuffer[RX_TX_BUFFER_SIZE];
  * Radio hardware and global parameters
  */
 SX1276_t SX1276;
-
-/* Debug snapshots for RX timeout diagnosis */
-volatile uint32_t gDbgSxRxTimeoutCount = 0;
-volatile uint8_t  gDbgSxLastOpMode = 0;
-volatile uint8_t  gDbgSxLastIrqFlags = 0;
-volatile uint8_t  gDbgSxLastHopChannel = 0;
-volatile uint8_t  gDbgSxLastPktSnr = 0;
-volatile uint8_t  gDbgSxLastPktRssi = 0;
 
 /*!
  * Hardware DIO IRQ callback initialization
@@ -1563,14 +1553,8 @@ static void SX1276OnTimeoutIrq( void* context )
     switch( SX1276.Settings.State )
     {
     case RF_RX_RUNNING:
-        gDbgSxRxTimeoutCount++;
-        gDbgSxLastOpMode = SX1276Read( REG_OPMODE );
         if( SX1276.Settings.Modem == MODEM_LORA )
         {
-            gDbgSxLastIrqFlags = SX1276Read( REG_LR_IRQFLAGS );
-            gDbgSxLastHopChannel = SX1276Read( REG_LR_HOPCHANNEL );
-            gDbgSxLastPktSnr = SX1276Read( REG_LR_PKTSNRVALUE );
-            gDbgSxLastPktRssi = SX1276Read( REG_LR_PKTRSSIVALUE );
         }
         if( SX1276.Settings.Modem == MODEM_FSK )
         {

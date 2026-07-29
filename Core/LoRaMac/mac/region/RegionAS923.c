@@ -32,19 +32,6 @@
 #include "RegionCommon.h"
 #include "RegionAS923.h"
 
-volatile uint32_t gDbgAs923LastRxFrequency = 0;
-volatile int32_t  gDbgAs923LastRxDatarate = -1;
-volatile uint32_t gDbgAs923LastRxBandwidth = 0;
-volatile uint32_t gDbgAs923LastRxChannel = 0;
-volatile uint32_t gDbgAs923LastRxSlot = 0;
-volatile uint32_t gDbgAs923LastRxConfigCount = 0;
-volatile uint32_t gDbgAs923RxConfigBusyCount = 0;
-volatile uint32_t gDbgAs923LastTxFrequency = 0;
-volatile int32_t  gDbgAs923LastTxDatarate = -1;
-volatile uint32_t gDbgAs923LastTxBandwidth = 0;
-volatile uint32_t gDbgAs923LastTxChannel = 0;
-volatile uint32_t gDbgAs923LastTxConfigCount = 0;
-
 // Definitions
 #define CHANNELS_MASK_SIZE                1
 
@@ -706,7 +693,6 @@ bool RegionAS923RxConfig( RxConfigParams_t* rxConfig, int8_t* datarate )
 
     if( Radio.GetStatus( ) != RF_IDLE )
     {
-        gDbgAs923RxConfigBusyCount++;
         return false;
     }
 
@@ -723,13 +709,6 @@ bool RegionAS923RxConfig( RxConfigParams_t* rxConfig, int8_t* datarate )
 
     // Read the physical datarate from the datarates table
     phyDr = DataratesAS923[dr];
-
-    gDbgAs923LastRxChannel = rxConfig->Channel;
-    gDbgAs923LastRxSlot = rxConfig->RxSlot;
-    gDbgAs923LastRxFrequency = frequency;
-    gDbgAs923LastRxDatarate = dr;
-    gDbgAs923LastRxBandwidth = rxConfig->Bandwidth;
-    gDbgAs923LastRxConfigCount++;
 
     Radio.SetChannel( frequency );
 
@@ -763,12 +742,7 @@ bool RegionAS923TxConfig( TxConfigParams_t* txConfig, int8_t* txPower, TimerTime
     phyTxPower = RegionCommonComputeTxPower( txPowerLimited, txConfig->MaxEirp, txConfig->AntennaGain );
 
     // Setup the radio frequency
-    gDbgAs923LastTxChannel = txConfig->Channel;
-    gDbgAs923LastTxFrequency = RegionNvmGroup2->Channels[txConfig->Channel].Frequency;
-    gDbgAs923LastTxDatarate = txConfig->Datarate;
-    gDbgAs923LastTxBandwidth = bandwidth;
-    gDbgAs923LastTxConfigCount++;
-    Radio.SetChannel( gDbgAs923LastTxFrequency );
+    Radio.SetChannel( RegionNvmGroup2->Channels[txConfig->Channel].Frequency );
 
     if( txConfig->Datarate == DR_7 )
     { // High Speed FSK channel

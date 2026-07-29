@@ -71,37 +71,6 @@ static uint32_t AppNextTxTime = 0;
 static uint32_t AppFrameCounter = 0;
 static uint32_t AppJoinRequestTick = 0;
 static uint8_t AppTxBuffer[APP_PAYLOAD_SIZE];
-volatile uint32_t gRadioVersionSample0 = 0U;
-volatile uint32_t gRadioVersionSample1 = 0U;
-volatile uint32_t gRadioVersionSample2 = 0U;
-volatile uint32_t gRadioProbePass = 0U;
-volatile uint32_t gRadioRawVersion = 0U;
-volatile uint32_t gRadioRawRx0 = 0U;
-volatile uint32_t gRadioRawRx1 = 0U;
-volatile uint32_t gRadioMisoIdle = 0U;
-volatile uint32_t gRadioRawHalStatus = 0U;
-volatile uint32_t gRadioBitBangVersion = 0U;
-volatile uint32_t gDbgMacInitStatus = 0xFFFFFFFFU;
-volatile uint32_t gDbgMacStartStatus = 0xFFFFFFFFU;
-volatile uint32_t gDbgJoinReqMacStatus = 0xFFFFFFFFU;
-volatile uint32_t gDbgLastMlmeReqType = 0xFFFFFFFFU;
-volatile uint32_t gDbgLastMlmeStatus = 0xFFFFFFFFU;
-volatile uint32_t gDbgJoinReqCount = 0U;
-volatile uint32_t gDbgJoinTimeoutCount = 0U;
-volatile uint32_t gDbgConfigStep = 0U;
-volatile uint32_t gDbgConfigStatus = 0xFFFFFFFFU;
-volatile uint32_t gDbgAppInitPhase = 0U;
-volatile uint32_t gDbgMainLoopCount = 0U;
-volatile uint32_t gDbgUplinkReqCount = 0U;
-volatile uint32_t gDbgUplinkMacAcceptCount = 0U;
-volatile uint32_t gDbgUplinkConfirmCount = 0U;
-volatile uint32_t gDbgLastMcpsStatus = 0xFFFFFFFFU;
-volatile uint32_t gDbgLastMcpsRequestStatus = 0xFFFFFFFFU;
-volatile uint32_t gDbgIsJoined = 0U;
-volatile uint32_t gDbgMacBusyCount = 0U;
-volatile uint32_t gDbgUplinkWaitCount = 0U;
-volatile uint32_t gDbgJoinedLoopCount = 0U;
-volatile uint32_t gDbgNextTxDeltaMs = 0U;
 
 static LoRaMacPrimitives_t AppPrimitives;
 static LoRaMacCallback_t AppCallbacks;
@@ -125,102 +94,11 @@ static void AppSendUplink(void);
 static void AppProcess(void);
 static void AppInit(void);
 static bool AppRadioSanityCheck(void);
-static uint8_t AppRawReadSx1276Reg(uint8_t regAddr, uint8_t *rx0, uint8_t *rx1, uint8_t *halStatus);
-static uint8_t AppBitBangReadSx1276Reg(uint8_t regAddr);
 extern void SX1276IoInit(void);
 extern void SX1276Reset(void);
 extern uint8_t SX1276Read(uint32_t addr);
 extern void GpioMcuIrqHandler(uint16_t gpioPin);
 /* USER CODE END PFP */
-
-#define SX1276_REG_VERSION  0x42U
-
-static uint8_t AppRawReadSx1276Reg(uint8_t regAddr, uint8_t *rx0, uint8_t *rx1, uint8_t *halStatus)
-{
-  uint8_t tx[2] = {0};
-  uint8_t rx[2] = {0};
-  HAL_StatusTypeDef hs;
-
-  tx[0] = (uint8_t)(regAddr & 0x7FU);
-  tx[1] = 0x00U;
-
-  HAL_GPIO_WritePin(LORA_NSS_GPIO_Port, LORA_NSS_Pin, GPIO_PIN_RESET);
-  hs = HAL_SPI_TransmitReceive(&hspi1, tx, rx, 2U, 20U);
-  HAL_GPIO_WritePin(LORA_NSS_GPIO_Port, LORA_NSS_Pin, GPIO_PIN_SET);
-
-  if (rx0 != NULL)
-  {
-    *rx0 = rx[0];
-  }
-  if (rx1 != NULL)
-  {
-    *rx1 = rx[1];
-  }
-  if (halStatus != NULL)
-  {
-    *halStatus = (uint8_t)hs;
-  }
-
-  return rx[1];
-}
-
-static uint8_t AppBitBangReadSx1276Reg(uint8_t regAddr)
-{
-  GPIO_InitTypeDef gpio = {0};
-  uint8_t cmd = (uint8_t)(regAddr & 0x7FU);
-  uint8_t data = 0;
-  uint8_t i;
-
-  /* Temporarily switch pins to GPIO mode for software SPI. */
-  gpio.Pin = LORA_NSS_Pin | GPIO_PIN_5 | GPIO_PIN_7;
-  gpio.Mode = GPIO_MODE_OUTPUT_PP;
-  gpio.Pull = GPIO_NOPULL;
-  gpio.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-  HAL_GPIO_Init(GPIOA, &gpio);
-
-  gpio.Pin = GPIO_PIN_6;
-  gpio.Mode = GPIO_MODE_INPUT;
-  gpio.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(GPIOA, &gpio);
-
-  HAL_GPIO_WritePin(LORA_NSS_GPIO_Port, LORA_NSS_Pin, GPIO_PIN_SET);
-  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
-  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_7, GPIO_PIN_RESET);
-  HAL_Delay(1);
-
-  HAL_GPIO_WritePin(LORA_NSS_GPIO_Port, LORA_NSS_Pin, GPIO_PIN_RESET);
-
-  /* Send address byte (read command). */
-  for (i = 0; i < 8U; i++)
-  {
-    uint8_t bit = (uint8_t)((cmd & 0x80U) != 0U);
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_7, bit ? GPIO_PIN_SET : GPIO_PIN_RESET);
-    cmd <<= 1;
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
-  }
-
-  /* Clock out data byte while sending dummy 0x00. */
-  for (i = 0; i < 8U; i++)
-  {
-    data <<= 1;
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_7, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
-    if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_6) == GPIO_PIN_SET)
-    {
-      data |= 1U;
-    }
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
-  }
-
-  HAL_GPIO_WritePin(LORA_NSS_GPIO_Port, LORA_NSS_Pin, GPIO_PIN_SET);
-
-  /* Restore SPI peripheral state and pin muxing. */
-  HAL_SPI_DeInit(&hspi1);
-  MX_SPI1_Init();
-
-  return data;
-}
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
@@ -255,9 +133,6 @@ static void AppMacMcpsConfirm(McpsConfirm_t *mcpsConfirm)
     return;
   }
 
-  gDbgUplinkConfirmCount++;
-  gDbgLastMcpsStatus = (uint32_t)mcpsConfirm->Status;
-
   if (mcpsConfirm->Status != LORAMAC_EVENT_INFO_STATUS_OK)
   {
     AppNextTxTime = HAL_GetTick() + APP_TX_PERIOD_MS;
@@ -275,9 +150,6 @@ static void AppMacMlmeConfirm(MlmeConfirm_t *mlmeConfirm)
   {
     return;
   }
-
-  gDbgLastMlmeReqType = (uint8_t)mlmeConfirm->MlmeRequest;
-  gDbgLastMlmeStatus = (uint8_t)mlmeConfirm->Status;
 
   if (mlmeConfirm->MlmeRequest == MLME_JOIN)
   {
@@ -305,110 +177,87 @@ static bool AppConfigureMac(void)
 {
   MibRequestConfirm_t mibReq = {0};
   LoRaMacStatus_t st;
-
-  gDbgConfigStep = 1U;
   mibReq.Type = MIB_DEVICE_CLASS;
   mibReq.Param.Class = CLASS_A;
   st = LoRaMacMibSetRequestConfirm(&mibReq);
   if (st != LORAMAC_STATUS_OK)
   {
-    gDbgConfigStatus = (uint8_t)st;
     return false;
   }
 
-  gDbgConfigStep = 3U;
   mibReq.Type = MIB_DEV_EUI;
   mibReq.Param.DevEui = SecureElementGetDevEui();
   st = LoRaMacMibSetRequestConfirm(&mibReq);
   if (st != LORAMAC_STATUS_OK)
   {
-    gDbgConfigStatus = (uint8_t)st;
     return false;
   }
 
-  gDbgConfigStep = 4U;
   mibReq.Type = MIB_JOIN_EUI;
   mibReq.Param.JoinEui = SecureElementGetJoinEui();
   st = LoRaMacMibSetRequestConfirm(&mibReq);
   if (st != LORAMAC_STATUS_OK)
   {
-    gDbgConfigStatus = (uint8_t)st;
     return false;
   }
 
-  gDbgConfigStep = 5U;
   mibReq.Type = MIB_ADR;
   mibReq.Param.AdrEnable = true;
   st = LoRaMacMibSetRequestConfirm(&mibReq);
   if (st != LORAMAC_STATUS_OK)
   {
-    gDbgConfigStatus = (uint8_t)st;
     return false;
   }
 
-  gDbgConfigStep = 6U;
   mibReq.Type = MIB_JOIN_ACCEPT_DELAY_1;
   mibReq.Param.JoinAcceptDelay1 = JOIN_ACCEPT_DELAY1_MS;
   st = LoRaMacMibSetRequestConfirm(&mibReq);
   if (st != LORAMAC_STATUS_OK)
   {
-    gDbgConfigStatus = (uint8_t)st;
     return false;
   }
 
-  gDbgConfigStep = 7U;
   mibReq.Type = MIB_JOIN_ACCEPT_DELAY_2;
   mibReq.Param.JoinAcceptDelay2 = JOIN_ACCEPT_DELAY2_MS;
   st = LoRaMacMibSetRequestConfirm(&mibReq);
   if (st != LORAMAC_STATUS_OK)
   {
-    gDbgConfigStatus = (uint8_t)st;
     return false;
   }
 
-  gDbgConfigStep = 8U;
   mibReq.Type = MIB_SYSTEM_MAX_RX_ERROR;
   mibReq.Param.SystemMaxRxError = RX_TIMING_ERROR_MS;
   st = LoRaMacMibSetRequestConfirm(&mibReq);
   if (st != LORAMAC_STATUS_OK)
   {
-    gDbgConfigStatus = (uint8_t)st;
     return false;
   }
 
-  gDbgConfigStep = 9U;
   mibReq.Type = MIB_MIN_RX_SYMBOLS;
   mibReq.Param.MinRxSymbols = RX_MIN_SYMBOLS;
   st = LoRaMacMibSetRequestConfirm(&mibReq);
   if (st != LORAMAC_STATUS_OK)
   {
-    gDbgConfigStatus = (uint8_t)st;
     return false;
   }
 
-  gDbgConfigStep = 10U;
   mibReq.Type = MIB_RX2_CHANNEL;
   mibReq.Param.Rx2Channel.Frequency = RX2_FREQUENCY_AS923;
   mibReq.Param.Rx2Channel.Datarate = RX2_DR_AS923;
   st = LoRaMacMibSetRequestConfirm(&mibReq);
   if (st != LORAMAC_STATUS_OK)
   {
-    gDbgConfigStatus = (uint8_t)st;
     return false;
   }
 
-  gDbgConfigStep = 11U;
   mibReq.Type = MIB_PUBLIC_NETWORK;
   mibReq.Param.EnablePublicNetwork = true;
   st = LoRaMacMibSetRequestConfirm(&mibReq);
   if (st != LORAMAC_STATUS_OK)
   {
-    gDbgConfigStatus = (uint8_t)st;
     return false;
   }
 
-  gDbgConfigStatus = (uint8_t)LORAMAC_STATUS_OK;
-  gDbgConfigStep = 12U;
   return true;
 }
 
@@ -420,10 +269,8 @@ static void AppRequestJoin(void)
   mlmeReq.Type = MLME_JOIN;
   mlmeReq.Req.Join.NetworkActivation = ACTIVATION_TYPE_OTAA;
   mlmeReq.Req.Join.Datarate = APP_JOIN_DATARATE;
-  gDbgJoinReqCount++;
 
   reqStatus = LoRaMacMlmeRequest(&mlmeReq);
-  gDbgJoinReqMacStatus = (uint8_t)reqStatus;
 
   if (reqStatus == LORAMAC_STATUS_OK)
   {
@@ -442,8 +289,6 @@ static void AppSendUplink(void)
   McpsReq_t mcpsReq = {0};
   LoRaMacStatus_t reqStatus;
 
-  gDbgUplinkReqCount++;
-
   AppTxBuffer[0] = (uint8_t)(AppFrameCounter >> 24);
   AppTxBuffer[1] = (uint8_t)(AppFrameCounter >> 16);
   AppTxBuffer[2] = (uint8_t)(AppFrameCounter >> 8);
@@ -460,11 +305,9 @@ static void AppSendUplink(void)
   mcpsReq.Req.Unconfirmed.Datarate = APP_TX_DATARATE;
 
   reqStatus = LoRaMacMcpsRequest(&mcpsReq);
-  gDbgLastMcpsRequestStatus = (uint32_t)reqStatus;
 
   if (reqStatus == LORAMAC_STATUS_OK)
   {
-    gDbgUplinkMacAcceptCount++;
     uint32_t waitMs = mcpsReq.ReqReturn.DutyCycleWaitTime;
 
     if (waitMs < APP_TX_PERIOD_MS)
@@ -486,8 +329,6 @@ static void AppProcess(void)
   uint32_t now = HAL_GetTick();
   bool macBusy;
 
-  gDbgIsJoined = AppJoined ? 1U : 0U;
-
   if (!AppJoined)
   {
     if (AppJoinRequested)
@@ -496,7 +337,6 @@ static void AppProcess(void)
       {
         AppJoinRequested = false;
         AppNextJoinTime = now + APP_JOIN_RETRY_MS;
-        gDbgJoinTimeoutCount++;
       }
     }
 
@@ -507,24 +347,18 @@ static void AppProcess(void)
     return;
   }
 
-  gDbgJoinedLoopCount++;
   macBusy = LoRaMacIsBusy();
 
   if (macBusy)
   {
-    gDbgMacBusyCount++;
-    gDbgNextTxDeltaMs = (AppNextTxTime > now) ? (AppNextTxTime - now) : 0U;
     return;
   }
 
   if (now < AppNextTxTime)
   {
-    gDbgUplinkWaitCount++;
-    gDbgNextTxDeltaMs = AppNextTxTime - now;
     return;
   }
 
-  gDbgNextTxDeltaMs = 0U;
   if (now >= AppNextTxTime)
   {
     AppSendUplink();
@@ -533,7 +367,6 @@ static void AppProcess(void)
 
 static bool AppRadioSanityCheck(void)
 {
-  uint8_t rawStatus = 0;
   uint32_t attempt;
 
   for (attempt = 0U; attempt < APP_RADIO_PROBE_RETRIES; attempt++)
@@ -541,34 +374,14 @@ static bool AppRadioSanityCheck(void)
     SX1276Reset();
     HAL_Delay(2);
 
-    gRadioMisoIdle = (uint8_t)HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_6);
-    gRadioRawVersion = AppRawReadSx1276Reg(SX1276_REG_VERSION,
-                                           (uint8_t *)&gRadioRawRx0,
-                                           (uint8_t *)&gRadioRawRx1,
-                                           &rawStatus);
-    gRadioRawHalStatus = rawStatus;
-    gRadioBitBangVersion = AppBitBangReadSx1276Reg(SX1276_REG_VERSION);
-
-    gRadioVersionSample0 = SX1276Read(SX1276_REG_VERSION);
-    HAL_Delay(1);
-    gRadioVersionSample1 = SX1276Read(SX1276_REG_VERSION);
-    HAL_Delay(1);
-    gRadioVersionSample2 = SX1276Read(SX1276_REG_VERSION);
-
-    if ((gRadioVersionSample0 == 0x12U) ||
-        (gRadioVersionSample1 == 0x12U) ||
-        (gRadioVersionSample2 == 0x12U) ||
-        (gRadioRawVersion == 0x12U) ||
-        (gRadioBitBangVersion == 0x12U))
+    if (SX1276Read(0x42U) == 0x12U)
     {
-      gRadioProbePass = 1U;
       return true;
     }
 
     HAL_Delay(APP_RADIO_PROBE_DELAY_MS);
   }
 
-  gRadioProbePass = 0U;
   return false;
 }
 
@@ -576,20 +389,11 @@ static void AppInit(void)
 {
   LoRaMacStatus_t macStatus;
 
-  gDbgAppInitPhase = 1U;
   BoardInitMcu();
   RtcBoardInit();
   SX1276IoInit();
-  gDbgAppInitPhase = 2U;
 
-  if (!AppRadioSanityCheck())
-  {
-    gDbgAppInitPhase = 3U;
-  }
-  else
-  {
-    gDbgAppInitPhase = 4U;
-  }
+  AppRadioSanityCheck();
 
   AppPrimitives.MacMcpsConfirm = AppMacMcpsConfirm;
   AppPrimitives.MacMcpsIndication = AppMacMcpsIndication;
@@ -602,29 +406,21 @@ static void AppInit(void)
   AppCallbacks.MacProcessNotify = AppMacProcessNotify;
 
   macStatus = LoRaMacInitialization(&AppPrimitives, &AppCallbacks, LORAWAN_ACTIVE_REGION);
-  gDbgMacInitStatus = (uint8_t)macStatus;
   if (macStatus != LORAMAC_STATUS_OK)
   {
-    gDbgAppInitPhase = 5U;
     Error_Handler();
   }
-  gDbgAppInitPhase = 6U;
 
   if (!AppConfigureMac())
   {
-    gDbgAppInitPhase = 7U;
     Error_Handler();
   }
-  gDbgAppInitPhase = 8U;
 
   macStatus = LoRaMacStart();
-  gDbgMacStartStatus = (uint8_t)macStatus;
   if (macStatus != LORAMAC_STATUS_OK)
   {
-    gDbgAppInitPhase = 9U;
     Error_Handler();
   }
-  gDbgAppInitPhase = 10U;
 
   AppNextJoinTime = HAL_GetTick();
   AppJoined = false;
@@ -677,7 +473,6 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    gDbgMainLoopCount++;
     TimerProcess();
     LoRaMacProcess();
     AppProcess();
