@@ -17,9 +17,12 @@
   */
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
+#include <string.h>
 #include "main.h"
 #include "rtc.h"
 #include "spi.h"
+#include "i2c.h"
+#include "adc.h"
 #include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
@@ -29,6 +32,8 @@
 #include "LoRaMac.h"
 #include "secure-element.h"
 #include "timer.h"
+#include "ina219.h"
+#include "dht22.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -40,20 +45,24 @@
 /* USER CODE BEGIN PD */
 #define LORAWAN_ACTIVE_REGION      LORAMAC_REGION_AS923
 #define APP_TX_PORT                2U
-#define APP_PAYLOAD_SIZE           8U
+#define APP_PAYLOAD_SIZE           14U
+#define SENSOR_POWERON_DELAY_MS    2000U
 #define APP_TX_PERIOD_MS           30000U
 #define APP_JOIN_RETRY_MS          10000U
 #define APP_JOIN_CONFIRM_WAIT_MS   15000U
 #define APP_RADIO_PROBE_RETRIES    10U
 #define APP_RADIO_PROBE_DELAY_MS   20U
 #define APP_JOIN_DATARATE          DR_2
-#define APP_TX_DATARATE            DR_2
+#define APP_TX_DATARATE            DR_4
 #define JOIN_ACCEPT_DELAY1_MS      5000UL
 #define JOIN_ACCEPT_DELAY2_MS      6000UL
 #define RX_TIMING_ERROR_MS         40UL
 #define RX_MIN_SYMBOLS             12U
 #define RX2_FREQUENCY_AS923        923200000UL
 #define RX2_DR_AS923               DR_2
+/* Adjust to the real pack's cut-off/full-charge voltage. */
+#define APP_BATTERY_VOLTAGE_MIN_MV 3300U
+#define APP_BATTERY_VOLTAGE_MAX_MV 4200U
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -70,7 +79,53 @@ static uint32_t AppNextJoinTime = 0;
 static uint32_t AppNextTxTime = 0;
 static uint32_t AppFrameCounter = 0;
 static uint32_t AppJoinRequestTick = 0;
+static uint32_t AppJoinAttemptCount = 0;
 static uint8_t AppTxBuffer[APP_PAYLOAD_SIZE];
+static bool AppIna219Present = false;
+static bool AppSensorPowerOn = false;
+static uint32_t AppSensorPowerOnTick = 0;
+/* Sampled once per cycle, right before the sensor cluster is powered on for
+ * the next read - i.e. while it's still off and the radio is asleep. Units
+ * of 0.1 mA. Note this still reflects the MCU in full RUN mode (no STOP
+ * mode is implemented), not a true low-power idle current. */
+static uint8_t AppIdleCurrentX100uA = 0;
+
+typedef struct
+{
+  uint32_t magic;
+  uint32_t mainLoopCount;
+  uint32_t isJoined;
+  uint32_t joinReqCount;
+  uint32_t uplinkReqCount;
+  uint32_t uplinkConfirmCount;
+  uint32_t lastMcpsRequestStatus;
+  uint32_t lastMcpsStatus;
+  uint32_t macBusyCount;
+  uint32_t dio0IrqCount;
+  uint32_t dio1IrqCount;
+  uint32_t frameCounter;
+  uint32_t dhtOkCount;
+  uint32_t dhtFailCount;
+  uint32_t dhtLastStage;
+  uint32_t lightRaw;
+  uint32_t soilRaw;
+} AppDiagSnapshot_t;
+
+#define APP_DIAG_MAGIC 0x44494147U /* "DIAG" */
+__attribute__((section(".noinit"))) volatile AppDiagSnapshot_t gDiagSnapshot;
+extern volatile uint32_t gDbgDio0IrqCount;
+extern volatile uint32_t gDbgDio1IrqCount;
+extern volatile uint8_t gDht22LastStage;
+
+static void AppUpdateDiagSnapshot(void)
+{
+  gDiagSnapshot.magic = APP_DIAG_MAGIC;
+  gDiagSnapshot.isJoined = AppJoined ? 1U : 0U;
+  gDiagSnapshot.joinReqCount = AppJoinAttemptCount;
+  gDiagSnapshot.dio0IrqCount = gDbgDio0IrqCount;
+  gDiagSnapshot.dio1IrqCount = gDbgDio1IrqCount;
+  gDiagSnapshot.frameCounter = AppFrameCounter;
+}
 
 static LoRaMacPrimitives_t AppPrimitives;
 static LoRaMacCallback_t AppCallbacks;
@@ -80,6 +135,7 @@ static LoRaMacCallback_t AppCallbacks;
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
+static uint8_t AppComputeBatteryLevel(uint16_t busVoltageMv);
 static uint8_t AppGetBatteryLevel(void);
 static float AppGetTemperatureLevel(void);
 static void AppNvmDataChange(uint16_t notifyFlags);
@@ -107,9 +163,41 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+static uint8_t AppComputeBatteryLevel(uint16_t busVoltageMv)
+{
+  uint32_t level;
+
+  /* LoRaWAN convention: 0 = external power, 1..254 = battery level,
+   * 255 = unable to measure. */
+  if (busVoltageMv == 0U)
+  {
+    return 255U;
+  }
+  if (busVoltageMv <= APP_BATTERY_VOLTAGE_MIN_MV)
+  {
+    return 1U;
+  }
+  if (busVoltageMv >= APP_BATTERY_VOLTAGE_MAX_MV)
+  {
+    return 254U;
+  }
+
+  level = ((uint32_t)(busVoltageMv - APP_BATTERY_VOLTAGE_MIN_MV) * 253U) /
+          (APP_BATTERY_VOLTAGE_MAX_MV - APP_BATTERY_VOLTAGE_MIN_MV);
+  return (uint8_t)(1U + level);
+}
+
+/* Callback for LoRaMac's own DevStatusAns handling (independent of uplinks). */
 static uint8_t AppGetBatteryLevel(void)
 {
-  return 255;
+  uint16_t busVoltageMv = 0U;
+
+  if (AppIna219Present)
+  {
+    (void)INA219_ReadBusVoltage_mV(&busVoltageMv);
+  }
+
+  return AppComputeBatteryLevel(busVoltageMv);
 }
 
 static float AppGetTemperatureLevel(void)
@@ -132,6 +220,9 @@ static void AppMacMcpsConfirm(McpsConfirm_t *mcpsConfirm)
   {
     return;
   }
+
+  gDiagSnapshot.uplinkConfirmCount++;
+  gDiagSnapshot.lastMcpsStatus = (uint32_t)mcpsConfirm->Status;
 
   if (mcpsConfirm->Status != LORAMAC_EVENT_INFO_STATUS_OK)
   {
@@ -157,6 +248,15 @@ static void AppMacMlmeConfirm(MlmeConfirm_t *mlmeConfirm)
 
     if (mlmeConfirm->Status == LORAMAC_EVENT_INFO_STATUS_OK)
     {
+      MibRequestConfirm_t mibReq = {0};
+
+      /* ADR ignores McpsRequest.Datarate once enabled, so the ADR-tracked
+       * datarate must be raised here or it stays at the join datarate,
+       * which is too small for our payload (LORAMAC_STATUS_LENGTH_ERROR). */
+      mibReq.Type = MIB_CHANNELS_DATARATE;
+      mibReq.Param.ChannelsDatarate = APP_TX_DATARATE;
+      (void)LoRaMacMibSetRequestConfirm(&mibReq);
+
       AppJoined = true;
       AppNextTxTime = HAL_GetTick() + 5000U;
     }
@@ -269,6 +369,7 @@ static void AppRequestJoin(void)
   mlmeReq.Type = MLME_JOIN;
   mlmeReq.Req.Join.NetworkActivation = ACTIVATION_TYPE_OTAA;
   mlmeReq.Req.Join.Datarate = APP_JOIN_DATARATE;
+  AppJoinAttemptCount++;
 
   reqStatus = LoRaMacMlmeRequest(&mlmeReq);
 
@@ -289,14 +390,49 @@ static void AppSendUplink(void)
   McpsReq_t mcpsReq = {0};
   LoRaMacStatus_t reqStatus;
 
-  AppTxBuffer[0] = (uint8_t)(AppFrameCounter >> 24);
-  AppTxBuffer[1] = (uint8_t)(AppFrameCounter >> 16);
-  AppTxBuffer[2] = (uint8_t)(AppFrameCounter >> 8);
-  AppTxBuffer[3] = (uint8_t)(AppFrameCounter);
-  AppTxBuffer[4] = AppGetBatteryLevel();
-  AppTxBuffer[5] = (uint8_t)(HAL_GetTick() >> 16);
-  AppTxBuffer[6] = (uint8_t)(HAL_GetTick() >> 8);
-  AppTxBuffer[7] = (uint8_t)(HAL_GetTick());
+  uint16_t busVoltageMv = 0U;
+  int16_t currentMa = 0;
+  if (AppIna219Present)
+  {
+    (void)INA219_ReadBusVoltage_mV(&busVoltageMv);
+    (void)INA219_ReadCurrent_mA(&currentMa);
+  }
+
+  AppTxBuffer[0] = AppComputeBatteryLevel(busVoltageMv);
+  AppTxBuffer[1] = (uint8_t)(busVoltageMv >> 8);
+  AppTxBuffer[2] = (uint8_t)(busVoltageMv);
+  AppTxBuffer[3] = (uint8_t)((uint16_t)currentMa >> 8);
+  AppTxBuffer[4] = (uint8_t)((uint16_t)currentMa);
+
+  int16_t temperatureCx10 = 0;
+  uint16_t humidityPctx10 = 0;
+  uint16_t lightRaw = 0U;
+  uint16_t soilRaw = 0U;
+
+  /* Sensor cluster is already powered and warmed up by AppProcess. */
+  if (Dht22Read(&temperatureCx10, &humidityPctx10))
+  {
+    gDiagSnapshot.dhtOkCount++;
+  }
+  else
+  {
+    gDiagSnapshot.dhtFailCount++;
+  }
+  gDiagSnapshot.dhtLastStage = gDht22LastStage;
+  lightRaw = AdcReadChannel(ADC_CHSELR_CHSEL1);
+  soilRaw = AdcReadChannel(ADC_CHSELR_CHSEL2);
+  gDiagSnapshot.lightRaw = lightRaw;
+  gDiagSnapshot.soilRaw = soilRaw;
+
+  AppTxBuffer[5] = (uint8_t)((uint16_t)temperatureCx10 >> 8);
+  AppTxBuffer[6] = (uint8_t)((uint16_t)temperatureCx10);
+  AppTxBuffer[7] = (uint8_t)(humidityPctx10 >> 8);
+  AppTxBuffer[8] = (uint8_t)(humidityPctx10);
+  AppTxBuffer[9] = (uint8_t)(lightRaw >> 8);
+  AppTxBuffer[10] = (uint8_t)(lightRaw);
+  AppTxBuffer[11] = (uint8_t)(soilRaw >> 8);
+  AppTxBuffer[12] = (uint8_t)(soilRaw);
+  AppTxBuffer[13] = AppIdleCurrentX100uA;
 
   mcpsReq.Type = MCPS_UNCONFIRMED;
   mcpsReq.Req.Unconfirmed.fPort = APP_TX_PORT;
@@ -304,7 +440,9 @@ static void AppSendUplink(void)
   mcpsReq.Req.Unconfirmed.fBufferSize = APP_PAYLOAD_SIZE;
   mcpsReq.Req.Unconfirmed.Datarate = APP_TX_DATARATE;
 
+  gDiagSnapshot.uplinkReqCount++;
   reqStatus = LoRaMacMcpsRequest(&mcpsReq);
+  gDiagSnapshot.lastMcpsRequestStatus = (uint32_t)reqStatus;
 
   if (reqStatus == LORAMAC_STATUS_OK)
   {
@@ -351,18 +489,56 @@ static void AppProcess(void)
 
   if (macBusy)
   {
+    gDiagSnapshot.macBusyCount++;
     return;
   }
 
-  if (now < AppNextTxTime)
+  if (!AppSensorPowerOn)
+  {
+    if (now < AppNextTxTime)
+    {
+      return;
+    }
+
+    /* Sample the idle current right before waking the sensor cluster, while
+     * it's still off and the radio is asleep - the closest this firmware
+     * gets to a "resting" reading without a STOP-mode rework. */
+    if (AppIna219Present)
+    {
+      int16_t idleCurrent100uA = 0;
+
+      if (INA219_ReadCurrent_x100uA(&idleCurrent100uA))
+      {
+        if (idleCurrent100uA < 0)
+        {
+          idleCurrent100uA = 0;
+        }
+        else if (idleCurrent100uA > 255)
+        {
+          idleCurrent100uA = 255;
+        }
+        AppIdleCurrentX100uA = (uint8_t)idleCurrent100uA;
+      }
+    }
+
+    /* Power the sensor cluster and let it warm up across several main-loop
+     * iterations instead of blocking TimerProcess()/LoRaMacProcess().
+     * MOSFET gate is driven inverted: RESET conducts (sensor VCC ~3.3V),
+     * SET starves it down to ~1.5V. Confirmed by measurement. */
+    HAL_GPIO_WritePin(SENSOR_PWR_GPIO_Port, SENSOR_PWR_Pin, GPIO_PIN_RESET);
+    AppSensorPowerOnTick = now;
+    AppSensorPowerOn = true;
+    return;
+  }
+
+  if ((now - AppSensorPowerOnTick) < SENSOR_POWERON_DELAY_MS)
   {
     return;
   }
 
-  if (now >= AppNextTxTime)
-  {
-    AppSendUplink();
-  }
+  AppSendUplink();
+  HAL_GPIO_WritePin(SENSOR_PWR_GPIO_Port, SENSOR_PWR_Pin, GPIO_PIN_SET);
+  AppSensorPowerOn = false;
 }
 
 static bool AppRadioSanityCheck(void)
@@ -389,11 +565,21 @@ static void AppInit(void)
 {
   LoRaMacStatus_t macStatus;
 
+  /* .noinit is not zeroed by the linker; reset the diagnostic snapshot
+   * ourselves so leftover SRAM garbage doesn't taint the counters. */
+  if (gDiagSnapshot.magic != APP_DIAG_MAGIC)
+  {
+    memset((void *)&gDiagSnapshot, 0, sizeof(gDiagSnapshot));
+  }
+
   BoardInitMcu();
   RtcBoardInit();
   SX1276IoInit();
 
   AppRadioSanityCheck();
+
+  AppIna219Present = INA219_Init(&hi2c1);
+  Dht22Init();
 
   AppPrimitives.MacMcpsConfirm = AppMacMcpsConfirm;
   AppPrimitives.MacMcpsIndication = AppMacMcpsIndication;
@@ -461,6 +647,8 @@ int main(void)
   MX_GPIO_Init();
   MX_RTC_Init();
   MX_SPI1_Init();
+  MX_I2C1_Init();
+  MX_ADC_Init();
   /* USER CODE BEGIN 2 */
   AppInit();
 
@@ -476,6 +664,8 @@ int main(void)
     TimerProcess();
     LoRaMacProcess();
     AppProcess();
+    gDiagSnapshot.mainLoopCount++;
+    AppUpdateDiagSnapshot();
     HAL_Delay(1);
   }
   /* USER CODE END 3 */

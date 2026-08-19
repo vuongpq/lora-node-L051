@@ -24,6 +24,7 @@ cmake_minimum_required(VERSION 3.10)
 
 if(${SECURE_ELEMENT} MATCHES SOFT_SE)
     file(GLOB ${PROJECT_NAME}_SOURCES "soft-se/*.c")
+    list(APPEND ${PROJECT_NAME}_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/ina219.c" "${CMAKE_CURRENT_SOURCE_DIR}/dht22.c")
 else()
     if(${SECURE_ELEMENT} MATCHES LR1110_SE)
         if (${RADIO} MATCHES lr1110)
@@ -46,7 +47,10 @@ else()
     endif()
 endif()
 
-add_library(${PROJECT_NAME} OBJECT EXCLUDE_FROM_ALL ${${PROJECT_NAME}_SOURCES})
+add_library(${PROJECT_NAME} OBJECT EXCLUDE_FROM_ALL ${${PROJECT_NAME}_SOURCES}
+    ina219.h
+    dht22.h
+    dht22.c)
 
 if(${SECURE_ELEMENT_PRE_PROVISIONED} MATCHES ON)
     target_compile_definitions(${PROJECT_NAME} PRIVATE -DSECURE_ELEMENT_PRE_PROVISIONED)
