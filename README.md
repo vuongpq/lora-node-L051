@@ -23,7 +23,7 @@ Node cảm biến chạy LoRaWAN Class A, đo nhiệt độ/độ ẩm không kh
 | `LORA_DIO0_Pin` | PB1 | Ngắt DIO0 (TxDone/RxDone), EXTI rising |
 | `LORA_DIO1_Pin` | PB2 | Ngắt DIO1 (RxTimeout), EXTI rising |
 | `DHT22_Pin` | PA0 | Data 1-wire DHT22, idle input pull-up |
-| `SENSOR_PWR_Pin` | PB5 | Gate MOSFET cấp nguồn cụm cảm biến (DHT22 + INA219 + LDR + soil) |
+| `SENSOR_PWR_Pin` | PB5 | Gate MOSFET cấp nguồn cụm cảm biến (DHT22 + LDR + soil) |
 | I2C1 SCL/SDA | PB6/PB7 | Bus cho INA219 |
 | ADC1 IN1 (LDR) | PA1 | — |
 | ADC1 IN2 (soil) | PA2 | — |
