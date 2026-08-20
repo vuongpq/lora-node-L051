@@ -131,7 +131,7 @@ Ghi chú các mốc thời gian (`main.c`):
 ```mermaid
 flowchart TD
     A([AppSendUplink]) --> B{AppIna219Present?}
-    B -- có --> B1[Đọc bus voltage (mV) + current (mA)]
+    B -- có --> B1["Đọc bus voltage (mV) + current (mA)"]
     B -- không --> B2[busVoltageMv=0, currentMa=0]
     B1 --> C
     B2 --> C[AppComputeBatteryLevel → byte 0-4]
@@ -160,19 +160,19 @@ flowchart TD
     C --> D["Nhả bus về input pull-up\nDht22SetInput"]
     D --> E{"Chờ bus lên HIGH\n(timeout 1000us / 5ms)"}
     E -- timeout --> F1[stage=1, return false]
-    E -- OK --> G{Chờ sensor kéo LOW (ACK)}
+    E -- ok --> G{"Chờ sensor kéo LOW (ACK)"}
     G -- timeout --> F2[stage=2, return false]
-    G -- OK --> H{Chờ sensor thả HIGH (ACK)}
+    G -- ok --> H{"Chờ sensor thả HIGH (ACK)"}
     H -- timeout --> F3[stage=3, return false]
-    H -- OK --> I{"Chờ LOW\n(= lead pulse của bit đầu tiên)"}
+    H -- ok --> I{"Chờ LOW\n(= lead pulse của bit đầu tiên)"}
     I -- timeout --> F4[stage=4, return false]
-    I -- OK --> LoopStart["Lặp 40 bit (5 byte): humidity(2) temp(2) checksum(1)"]
+    I -- ok --> LoopStart["Lặp 40 bit (5 byte): humidity(2) temp(2) checksum(1)"]
 
     LoopStart --> L1{"Chờ lead pulse HIGH\n(timeout 150us)"}
     L1 -- timeout --> F5["stage = 10+bitIndex\nreturn false"]
-    L1 -- OK --> L2{"Đo độ rộng xung HIGH\n(timeout 150us)"}
+    L1 -- ok --> L2{"Đo độ rộng xung HIGH\n(timeout 150us)"}
     L2 -- timeout --> F6["stage = 50+bitIndex\nreturn false"]
-    L2 -- OK --> L3{"HighUs > 40us?"}
+    L2 -- ok --> L3{"HighUs > 40us?"}
     L3 -- có --> L4[bit = 1]
     L3 -- không --> L5[bit = 0]
     L4 --> LoopNext{Còn bit?}
